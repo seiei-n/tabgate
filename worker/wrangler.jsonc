@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tabgate",
+  "main": "src/index.ts",
+  // デプロイ先のカスタムドメイン（例）
+  // "routes": [{ "pattern": "tabgate.example.com", "custom_domain": true }],
+  "compatibility_date": "2026-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "HUB", "class_name": "Hub" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }],
+  "vars": {
+    // 空ならローカルモード（LOCAL_ADMIN_TOKEN / LOCAL_AGENT_TOKENS の Bearer 認証）。
+    // 例: "https://myteam.cloudflareaccess.com"
+    "ACCESS_TEAM_DOMAIN": "",
+    // Access アプリの Application Audience (AUD) タグ。複数ならカンマ区切り。
+    "ACCESS_AUD": "",
+    // 管理画面を使えるメールアドレス（カンマ区切り）
+    "ADMIN_EMAILS": ""
+  }
+}

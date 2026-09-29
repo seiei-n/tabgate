@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "tabgate",
+  "version": "0.1.0",
+  "description": "エージェントから Chrome を操作するためのブリッジ（Cloudflare 経由）",
+  "permissions": ["debugger", "tabs", "storage", "alarms", "nativeMessaging"],
+  "host_permissions": ["https://api.typesafe.ai/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html" }
+}

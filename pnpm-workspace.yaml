@@ -1,0 +1,10 @@
+packages:
+  - worker
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  workerd: true
+
+minimumReleaseAgeExclude:
+  - wrangler@4.143.0

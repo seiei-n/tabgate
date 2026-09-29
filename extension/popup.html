@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 13px system-ui, sans-serif; width: 320px; padding: 8px; }
+  label { display: block; margin: 8px 0; } input[type=text], input[type=password] { width: 100%; box-sizing: border-box; }
+  #status { font-weight: bold; }
+</style>
+</head>
+<body>
+<div>状態: <span id="status">-</span></div>
+<label>サーバー URL<input type="text" id="url" placeholder="https://tabgate.example.com または http://192.168.1.10:8787"></label>
+<label>ブラウザトークン<input type="password" id="token" placeholder="管理画面で発行"></label>
+<label>Jev API キー（任意・TypeSafe）<input type="password" id="jevKey" placeholder="設定すると find / read_page(query) が使える"></label>
+<label><input type="checkbox" id="enabled"> エージェントからの接続を許可する</label>
+<button id="save">保存</button>
+<script src="popup.js"></script>
+</body>
+</html>

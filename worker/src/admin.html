@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tabgate</title>
+<style>
+  :root { color-scheme: light dark; --b: #8884; --muted: #888; }
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 32px; }
+  table { border-collapse: collapse; width: 100%; } td, th { border-bottom: 1px solid var(--b); padding: 6px; text-align: left; vertical-align: top; }
+  .on { color: #2a2; } .off { color: var(--muted); } .muted { color: var(--muted); font-size: 12px; }
+  code { word-break: break-all; } img { max-width: 100%; border: 1px solid var(--b); margin-top: 8px; }
+  button { cursor: pointer; } .tabs { margin: 8px 0 0 16px; } .tabs li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<h1>tabgate <span class="muted" id="me"></span></h1>
+
+<h2>ブラウザ</h2>
+<table id="browsers"></table>
+<p>
+  <input id="newName" placeholder="ブラウザ名（例: home-mac）">
+  <button id="add">登録してトークン発行</button>
+</p>
+<p id="newToken"></p>
+
+<h2>エージェントとアクセス権</h2>
+<p class="muted">MCP に一度接続したエージェントがここに表示されます。チェックしたブラウザだけがそのエージェントから見えます。</p>
+<table id="agents"></table>
+<p><input id="newAgent" placeholder="email または svc:<client-id>"> <button id="addAgent">エージェントを追加</button></p>
+
+<script>
+const auth = () => { try { const t = localStorage.getItem("tg_token"); return t ? { authorization: "Bearer " + t } : {}; } catch { return {}; } };
+async function api(path, opts = {}) {
+  const r = await fetch("/api" + path, { ...opts, headers: { "content-type": "application/json", ...auth(), ...opts.headers } });
+  if (r.status === 401) {
+    // ローカルモード: LOCAL_ADMIN_TOKEN を入力してもらう
+    const t = prompt("LOCAL_ADMIN_TOKEN を入力");
+    if (t) { try { localStorage.setItem("tg_token", t); } catch {} return api(path, opts); }
+  }
+  if (!r.ok) throw new Error(await r.text());
+  return r;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+let state, extraAgents = [];
+
+async function load() {
+  state = await (await api("/state")).json();
+  document.getElementById("me").textContent = state.me;
+  const bt = document.getElementById("browsers");
+  bt.innerHTML = "<tr><th>名前</th><th>ID</th><th>状態</th><th></th></tr>" + state.browsers.map((b) => `
+    <tr><td>${esc(b.name)}<ul class="tabs" id="tabs-${b.id}"></ul></td><td><code>${b.id}</code></td>
+    <td class="${b.online ? "on" : "off"}">${b.online ? "● online" : "○ offline"}</td>
+    <td>${b.online ? `<button data-tabs="${b.id}">タブ</button> ` : ""}<button data-del="${b.id}">削除</button></td></tr>`).join("");
+
+  const agents = [...new Set([...Object.keys(state.agents), ...Object.keys(state.grants), ...extraAgents])];
+  const at = document.getElementById("agents");
+  at.innerHTML = "<tr><th>エージェント</th><th>最終接続</th>" + ["*", ...state.browsers.map((b) => b.id)].map((id) =>
+    `<th>${id === "*" ? "全部" : esc(state.browsers.find((b) => b.id === id).name)}</th>`).join("") + "</tr>" +
+    agents.map((a) => `<tr><td>${esc(a)}</td><td class="muted">${state.agents[a] ? new Date(state.agents[a]).toLocaleString() : "-"}</td>` +
+      ["*", ...state.browsers.map((b) => b.id)].map((id) =>
+        `<td><input type="checkbox" data-agent="${esc(a)}" value="${id}" ${(state.grants[a] ?? []).includes(id) ? "checked" : ""}></td>`).join("") + "</tr>").join("");
+}
+
+document.body.addEventListener("click", async (e) => {
+  const t = e.target;
+  if (t.dataset.del && confirm("このブラウザを削除しますか？トークンは無効になります")) { await api("/browsers/" + t.dataset.del, { method: "DELETE" }); load(); }
+  if (t.dataset.tabs) {
+    const tabs = await (await api(`/browsers/${t.dataset.tabs}/tabs`)).json();
+    // タブ情報は拡張機能（=ブラウザトークン保持者）から来るので信用しない。tabId は整数のみ受け付け、文字列は必ずエスケープ
+    document.getElementById("tabs-" + t.dataset.tabs).innerHTML = tabs.filter((x) => Number.isInteger(x.tabId)).map((x) =>
+      `<li>${x.active ? "★ " : ""}${esc(x.title)} <span class="muted">${esc(x.url)}</span>
+       <button data-shot="${esc(t.dataset.tabs)}/${x.tabId}">📷</button><div id="shot-${x.tabId}"></div></li>`).join("");
+  }
+  if (t.dataset.shot) {
+    const [bid, tid] = t.dataset.shot.split("/");
+    const blob = await (await api(`/browsers/${bid}/tabs/${tid}/screenshot`)).blob();
+    document.getElementById("shot-" + tid).innerHTML = `<img src="${URL.createObjectURL(blob)}">`;
+  }
+});
+document.body.addEventListener("change", async (e) => {
+  const a = e.target.dataset.agent;
+  if (!a) return;
+  const browsers = [...document.querySelectorAll("input[data-agent]")].filter((x) => x.dataset.agent === a && x.checked).map((x) => x.value);
+  await api("/grants", { method: "PUT", body: JSON.stringify({ agent: a, browsers }) });
+});
+document.getElementById("add").onclick = async () => {
+  const name = document.getElementById("newName").value.trim();
+  if (!name) return;
+  const { token } = await (await api("/browsers", { method: "POST", body: JSON.stringify({ name }) })).json();
+  document.getElementById("newToken").innerHTML = `拡張機能に設定するトークン（この画面でしか表示されません）:<br><code>${esc(token)}</code>`;
+  load();
+};
+document.getElementById("addAgent").onclick = () => {
+  const a = document.getElementById("newAgent").value.trim();
+  if (a) { extraAgents.push(a); load(); }
+};
+load().catch((e) => alert(e.message));
+</script>
+</body>
+</html>
