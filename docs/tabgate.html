@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 675px; }
+  body {
+    font-family: system-ui, "Helvetica Neue", sans-serif;
+    color: #e8ecf5;
+    background:
+      radial-gradient(900px 500px at 85% -10%, rgba(79,140,255,.22), transparent 60%),
+      radial-gradient(700px 420px at -5% 110%, rgba(246,130,31,.18), transparent 60%),
+      #0b1020;
+    padding: 56px 64px;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .brand { display: flex; align-items: baseline; gap: 18px; }
+  .logo { font-family: ui-rounded, system-ui, sans-serif; font-weight: 800; font-size: 72px; line-height: 1; letter-spacing: -1.5px; }
+  .logo span { color: #4f8cff; }
+  .mit { font-family: system-ui; font-weight: 600; font-size: 15px; line-height: 1; color: #9aa6c2; border: 1px solid #2a3452; border-radius: 999px; padding: 6px 12px; }
+  .tagline { margin-top: 16px; font-size: 30px; font-weight: 600; color: #c9d3ea; letter-spacing: -.3px; }
+  .tagline b { color: #fff; }
+
+  .flow { margin-top: 48px; display: flex; align-items: stretch; gap: 0; }
+  .node {
+    flex: 1; background: rgba(255,255,255,.04); border: 1px solid #26304d; border-radius: 16px;
+    padding: 20px 20px 18px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .node .k { font-family: system-ui; font-weight: 700; font-size: 13px; line-height: 1; letter-spacing: 1.2px; text-transform: uppercase; white-space: nowrap; }
+  .node .t { font-size: 23px; font-weight: 700; color: #fff; }
+  .node .d { font-size: 16px; color: #9aa6c2; line-height: 1.45; }
+  .agent .k { color: #b692ff; } .access .k { color: #f6821f; } .worker .k { color: #f6821f; } .chrome .k { color: #34c77b; }
+  .access { border-color: rgba(246,130,31,.45); }
+  .arrow { width: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #6b7797; font-family: ui-monospace, Menlo, monospace; font-weight: 600; font-size: 12px; line-height: 1.2; text-align: center; }
+  .arrow svg { margin: 4px 0; }
+
+  .chips { margin-top: 40px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .chip { font-size: 16px; font-weight: 600; color: #dfe6f7; background: rgba(79,140,255,.12); border: 1px solid rgba(79,140,255,.35); border-radius: 999px; padding: 10px 16px; }
+  .chip i { font-style: normal; color: #7fb0ff; }
+  .url { margin-top: 36px; font-family: ui-monospace, Menlo, monospace; font-weight: 600; font-size: 18px; line-height: 1; color: #7f8bab; }
+</style>
+</head>
+<body>
+  <div class="brand"><div class="logo">tab<span>gate</span></div><div class="mit">MIT · open source</div></div>
+  <div class="tagline">Let <b>any coding agent</b> drive <b>your Chrome</b> — from anywhere.</div>
+
+  <div class="flow">
+    <div class="node agent">
+      <div class="k">Agents</div>
+      <div class="t">Claude Code · Codex · any MCP client</div>
+      <div class="d">on your laptop or a remote SSH host</div>
+    </div>
+    <div class="arrow">MCP<svg width="40" height="14"><path d="M0 7h34m-6-6 6 6-6 6" stroke="#6b7797" stroke-width="2" fill="none"/></svg></div>
+    <div class="node access">
+      <div class="k">Cloudflare Access</div>
+      <div class="t">Zero Trust auth</div>
+      <div class="d">OAuth for people,<br>service tokens for SSH hosts</div>
+    </div>
+    <div class="arrow"><svg width="40" height="14"><path d="M0 7h34m-6-6 6 6-6 6" stroke="#6b7797" stroke-width="2" fill="none"/></svg></div>
+    <div class="node worker">
+      <div class="k">Cloudflare Workers</div>
+      <div class="t">MCP server &amp; relay</div>
+      <div class="d">admin UI decides which agent sees which browser</div>
+    </div>
+    <div class="arrow">WS<svg width="40" height="14"><path d="M6 7h28m-6-6 6 6-6 6M12 1 6 7l6 6" stroke="#6b7797" stroke-width="2" fill="none"/></svg></div>
+    <div class="node chrome">
+      <div class="k">Chrome extension</div>
+      <div class="t">Your real browser</div>
+      <div class="d">your tabs, your logins,<br>behind NAT</div>
+    </div>
+  </div>
+
+  <div class="chips">
+    <div class="chip">🔐 Per-agent browser grants</div>
+    <div class="chip">🔀 SSH dev servers → <i>localhost</i> via port_forward</div>
+    <div class="chip">⚡ ~40% fewer tokens on large pages with Jev</div>
+  </div>
+  <div class="url">github.com/seiei-n/tabgate</div>
+</body>
+</html>

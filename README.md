@@ -1,5 +1,7 @@
 # tabgate
 
+![tabgate: let any coding agent drive your Chrome from anywhere](docs/tabgate.png)
+
 English | [日本語](README.ja.md)
 
 A bridge that lets any coding harness (Claude Code, Codex, Cursor, or any other MCP client) drive your own Chrome.

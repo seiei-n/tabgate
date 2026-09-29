@@ -1,5 +1,7 @@
 # tabgate
 
+![tabgate: どのコーディングエージェントからでも、手元の Chrome を操作できる](docs/tabgate.png)
+
 [English](README.md) | 日本語
 
 どのコーディングハーネス（Claude Code / Codex / Cursor など MCP クライアント）からでも、手元の Chrome を操作できるようにするブリッジです。
