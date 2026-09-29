@@ -1,199 +1,207 @@
 # tabgate
 
-どのコーディングハーネス（Claude Code / Codex / Cursor など MCP クライアント）からでも、手元の Chrome を操作できるようにするブリッジです。
-Cloudflare Workers を中継点にし、Cloudflare Access（Zero Trust）で認証します。SSH 先のエージェントなど NAT の内側からも使えます。
+English | [日本語](README.ja.md)
+
+A bridge that lets any coding harness (Claude Code, Codex, Cursor, or any other MCP client) drive your own Chrome.
+It relays through Cloudflare Workers and authenticates with Cloudflare Access (Zero Trust), so agents behind NAT, such as ones running on a remote host over SSH, can reach your local browser too.
 
 ```
-[エージェント (SSH 先など)] --MCP/HTTP--> [Cloudflare Access] --> [Worker /mcp] ─┐
-[管理者のブラウザ] --------------------> [Cloudflare Access] --> [Worker / , /api] ├─ Durable Object "Hub"
-[Chrome 拡張機能] ------WebSocket------> (Access Bypass)    --> [Worker /ext] ──┘   (ブラウザ・権限・中継)
+[Agent (e.g. on an SSH host)] --MCP/HTTP--> [Cloudflare Access] --> [Worker /mcp] ─┐
+[Admin's browser] ------------------------> [Cloudflare Access] --> [Worker / , /api] ├─ Durable Object "Hub"
+[Chrome extension] ------WebSocket-------> (Access Bypass)    --> [Worker /ext] ──┘   (browsers, grants, relay)
 ```
 
-- `extension/`: Chrome 拡張機能（MV3）。Worker に WebSocket で常時接続し、`chrome.debugger`（CDP）でタブを操作する
-- `worker/`: Cloudflare Worker + Durable Object。MCP サーバー（Streamable HTTP）、拡張機能の中継、管理画面を 1 つにまとめている
+- `extension/`: Chrome extension (MV3). Keeps a WebSocket open to the Worker and drives tabs through `chrome.debugger` (CDP).
+- `worker/`: Cloudflare Worker + Durable Object. One deployment serves the MCP server (Streamable HTTP), the extension relay, and the admin UI.
 
-## 権限モデル
+The admin UI and extension popup are currently in Japanese.
 
-- **ブラウザ**: 管理画面で登録するとトークンが発行される。拡張機能はトークンで接続する
-- **エージェント**: Access が付けた ID で識別する（ユーザーならメール、Service Token なら `svc:<Client ID>`）
-- **権限付与**: 管理画面で「エージェント × ブラウザ」をチェックする。既定では何も見えない
-- 手元の拡張機能ポップアップの「接続を許可する」を外すと、即座に切断できる
+## Access model
 
-## MCP ツール
+- **Browsers**: registering a browser in the admin UI issues a token; the extension connects with that token.
+- **Agents**: identified by the identity Access attaches (an email for users, `svc:<Client ID>` for service tokens).
+- **Grants**: in the admin UI, tick which agents may see which browsers. Nothing is visible by default.
+- Unticking "allow connections from agents" in the extension popup disconnects immediately.
+
+## MCP tools
 
 `list_browsers` `list_tabs` `open_tab` `navigate` `close_tab` `screenshot` `read_page` `find` `port_forward` `click` `type` `evaluate` `cdp`
 
-許可されたブラウザが 1 台だけなら `browser` 引数は省略できます。
+If an agent is granted exactly one browser, the `browser` argument can be omitted.
 
-`read_page` は本文を返し、操作できる要素の位置に印を埋め込みます。印の番号は `[data-tg="N"]` として `click` / `type` に渡せます。表の行・リスト項目・見出しは 1 行にまとまります。
+`read_page` returns the page text with markers embedded where interactive elements are. Pass a marker's number to `click` / `type` as `[data-tg="N"]`. Each table row, list item, and heading is collapsed onto one line.
 
 ```
-alice@example.com Alice [53:select-one member] [54]保存 最終ログイン 2026/06/29 … [56]招待を再送 [57]停止 [58]削除
+alice@example.com Alice [53:select-one member] [54]Save Last login 2026/06/29 … [56]Resend invite [57]Suspend [58]Delete
 ```
 
-- `[N]ラベル`: リンク・ボタンなど
-- `[N:type 値]`: 入力欄（値が空ならプレースホルダー）
+- `[N]label`: links, buttons, etc.
+- `[N:type value]`: form fields (the placeholder when the value is empty)
 
-## SSH 先の開発サーバーをブラウザで開く（任意・macOS）
+## Open dev servers on an SSH host in your browser (optional, macOS)
 
-SSH 先のエージェントが `localhost:5173` などで動かしている開発サーバーを、手元の Chrome で開いて操作できます。ブラウザ側の PC から `ssh -L` でポート転送を張るので、SSH 先にも Cloudflare にも追加の設定は要りません。
+An agent on an SSH host can open the dev server it runs on, say, `localhost:5173` in your local Chrome and interact with it. The browser machine opens an `ssh -L` port forward, so nothing extra is needed on the SSH host or on Cloudflare.
 
-### 設定（ブラウザ側の Mac で 1 回）
+### Setup (once, on the Mac running the browser)
 
 ```sh
-./native/install.sh <拡張機能 ID>     # ID は chrome://extensions の tabgate に表示される
-echo devbox >> ~/.config/tabgate/forward-hosts   # 転送を許可する SSH ホスト（~/.ssh/config の名前）
+./native/install.sh <extension ID>     # shown for tabgate on chrome://extensions
+echo devbox >> ~/.config/tabgate/forward-hosts   # SSH hosts allowed for forwarding (names from ~/.ssh/config)
 ```
 
-前提: その Mac からパスワードなしで `ssh <ホスト>` できること。
+Requires passwordless `ssh <host>` from that Mac.
 
-### 使い方（エージェント）
+### Usage (by the agent)
 
-1. `port_forward` `{ "action": "list" }` で、転送できるホストを確認
-2. `port_forward` `{ "action": "open", "host": "devbox", "port": 5173 }` で転送を張る
-3. `open_tab` で `http://localhost:5173` を開き、あとは通常どおり `read_page` / `click` など
-4. 終わったら `port_forward` `{ "action": "close", ... }`
+1. `port_forward` `{ "action": "list" }` to see which hosts can be forwarded
+2. `port_forward` `{ "action": "open", "host": "devbox", "port": 5173 }` to open the forward
+3. `open_tab` on `http://localhost:5173`, then use `read_page` / `click` etc. as usual
+4. `port_forward` `{ "action": "close", ... }` when done
 
-### 仕組みと制限
+### How it works and limits
 
-- 拡張機能から Chrome の native messaging で `native/tabgate-forward.py` を起動し、`ssh -f -N -L 127.0.0.1:<port>:localhost:<port> <host>` を実行する
-- 転送できるのは `~/.config/tabgate/forward-hosts` に書いたホストだけ。ポートは 1024〜65535 の整数だけ受け付け、Mac の `127.0.0.1` にだけ開く（LAN からは見えない）
-- ブラウザ側とSSH 先で同じポート番号を使う。Mac 側でそのポートが使用中なら `open` は失敗する
-- 使えるのは native host を入れた PC の Chrome だけ
-- 入力検証のテスト: `python3 native/test_forward.py`
+- The extension launches `native/tabgate-forward.py` via Chrome native messaging, which runs `ssh -f -N -L 127.0.0.1:<port>:localhost:<port> <host>`.
+- Only hosts listed in `~/.config/tabgate/forward-hosts` can be forwarded. Ports must be integers from 1024 to 65535, and forwards listen on the Mac's `127.0.0.1` only (not visible on the LAN).
+- The same port number is used on both sides. `open` fails if the port is already taken on the Mac.
+- Works only in Chrome on the machine where the native host is installed.
+- Input validation test: `python3 native/test_forward.py`
 
-## Jev でトークンを節約する（任意）
+## Save tokens with Jev (optional)
 
-[TypeSafe](https://typesafe.ai) の Jev を使うと、ページ全体をエージェントに渡さず、拡張機能の中で必要な部分だけを選んで返せます。
+With [TypeSafe](https://typesafe.ai)'s Jev, the extension selects just the relevant part of a page instead of handing the whole page to the agent.
 
-### 設定
+### Setup
 
-1. [console.typesafe.ai](https://console.typesafe.ai/keys) で API キーを発行する
-2. 拡張機能のポップアップの「Jev API キー」に入れて保存する
+1. Create an API key at [console.typesafe.ai](https://console.typesafe.ai/keys)
+2. Paste it into the "Jev API キー" (Jev API key) field in the extension popup and save
 
-キーは拡張機能の中（`chrome.storage.local`）にだけ保存され、Worker やエージェントには渡りません。Jev の呼び出しも拡張機能から直接行います。
+The key is stored only inside the extension (`chrome.storage.local`) and is never sent to the Worker or to agents. The extension calls Jev directly.
 
-### 使えるようになるもの
+### What it enables
 
-| ツール | 渡すもの | 返るもの |
+| Tool | Input | Output |
 |---|---|---|
-| `find` | `query`: 探す要素（例: `login button`）、`top_k`（既定 5） | 候補の selector・要素ラベル・確率 `p`、該当がありそうかの確率 `exists` |
-| `read_page` + `query` | `query`: 知りたいこと（例: `price of the product`）、`top_k`（既定 3） | 関連する節だけと、関連があるかの確率 `relevant` |
+| `find` | `query`: the element to look for (e.g. `login button`), `top_k` (default 5) | candidate selectors, element labels, probability `p`, and `exists`, the probability that anything matches |
+| `read_page` + `query` | `query`: what you want to know (e.g. `price of the product`), `top_k` (default 3) | only the relevant passages, plus `relevant`, the probability that anything relevant exists |
 
-`find` が返した `selector` はそのまま `click` / `type` に渡せます。
+The `selector` returned by `find` can be passed straight to `click` / `type`.
 
 ```jsonc
 // find { "tabId": 123, "query": "delete button for alice@example.com" }
 {
   "exists": 0.9,
   "candidates": [
-    { "selector": "[data-tg=\"58\"]", "element": "<button type=submit> 削除 @ alice@example.com Alice member 保存 最終ログイン…", "p": 0.99 }
+    { "selector": "[data-tg=\"58\"]", "element": "<button type=submit> Delete @ alice@example.com Alice member Save Last login…", "p": 0.99 }
   ]
 }
 ```
 
-### エージェント向けの使い方
+### Guidance for agents
 
-- 大きいページ（全文が数万字）では `find` / `read_page` + `query` で絞り込む。小さいページは全文の `read_page` 1 回の方が安い（下の実測を参照）
-- `query` は英語で書く（Jev は英語の方が精度が高い）
-- 削除などの取り消せない操作の前は、候補の `element`（`@` 以降に行の内容が付く）で対象を確かめる
+- On large pages (tens of thousands of characters), narrow down with `find` / `read_page` + `query`. On small pages, a single full `read_page` is cheaper (see the measurements below).
+- Write `query` in English (Jev is more accurate in English).
+- Before irreversible actions such as deleting, check the candidate's `element` (row context follows the `@`).
 
-実測（OAuth クライアント 22 件の管理画面）:
+Measured on an admin page listing 22 OAuth clients:
 
-- 1 回で返る量: 全文の `read_page` 4,635 字（要素の印を本文に埋め込む前は 8,234 字）に対し、`find` 155〜224 字、`read_page` + `query` 604 字。1 回あたり約 0.45 秒（Worker・拡張機能・Jev の往復込み）
-- タスク全体（Claude Code で同じ読み取りタスクを Jev あり・なしで 3 回ずつ）: この大きさのページでは Jev で合計トークンは減らなかった。エージェントがツールを 1 回多く呼ぶと、会話全体（約 1.6 万トークン）を送り直す分の方が、全文を読まずに済んだ分より大きいため
+- Size of one response: full `read_page` 4,635 chars (8,234 before markers were embedded in the text), `find` 155–224 chars, `read_page` + `query` 604 chars. About 0.45 s per call, including the Worker, extension, and Jev round trips.
+- Whole task (the same read-only tasks run 3 times each in Claude Code, with and without Jev): on a page this size, Jev did not reduce total tokens. One extra tool call makes the agent resend the whole conversation (about 16k tokens), which outweighs what skipping the full text saves.
 
-実測（英語版 Wikipedia「Tokyo」、全文の `read_page` が 3 万字で打ち切られる大きさ）:
+Measured on the English Wikipedia article "Tokyo" (large enough that full `read_page` is cut off at 30,000 chars):
 
-- タスク全体の入力トークン: Jev なし 27,245 に対し、Jev あり 15,900〜16,700（約 40% 減）。情報を読むタスクと要素の selector を探すタスクの両方で同程度。全 18 回とも正解
-- エージェントは指示しなくても、大きいページでは `read_page` に `query` を付けて呼んだ
+- Input tokens for the whole task: 27,245 without Jev vs 15,900–16,700 with Jev (about 40% less). Similar for both a fact-finding task and a find-the-selector task. All 18 runs answered correctly.
+- On this large page, the agent passed `query` to `read_page` on its own without being told to.
 
-### 仕組み
+### How it works
 
-- 要素一覧や本文の節に ID を振って Jev に渡し、「どれが合うか（Choice）」と「そもそも該当があるか（Noul）」を 1 リクエストで同時に聞く
-- 要素が 250 件を超えたら 250 件ずつ並列に選ばせ、各組の上位で決勝を行う（Choice の選択肢は最大 255 件のため）
-- 同じ表記の要素（行ごとの「削除」ボタンなど）には、属する行・見出しのテキストを添えて区別できるようにしている
-- 本文は表の行・リスト項目・見出しを 1 行にまとめてから約 500 字の節に分ける
-- 確率 0.05 未満の候補は返さない（最低 1 件は返す）
+- IDs are assigned to the element list or text passages, and Jev is asked in a single request both which one fits (Choice) and whether anything fits at all (Noul).
+- Beyond 250 elements, chunks of 250 are ranked in parallel and the top picks of each chunk go to a final round (Choice allows at most 255 options).
+- Elements with identical labels (such as a "Delete" button on every row) get their row or section text appended so they can be told apart.
+- Page text is collapsed to one line per table row, list item, and heading, then split into passages of about 500 chars.
+- Candidates with probability below 0.05 are dropped (at least one is always returned).
 
-### 注意
+### Caveats
 
-- `find` と `read_page` + `query` を使うと、ページの要素一覧と本文が TypeSafe の API に送られる。社外に出したくないページでは使わない（キーを空にすれば送られない）
-- キーが未設定のとき、`find` はエラーを返し、`read_page` は `query` を無視して全文を返す
-- `find` が見る要素は 500 件まで、`read_page` + `query` が見る本文は先頭 2 万字まで（Jev の入力上限 32k tokens に収めるため）
+- Using `find` or `read_page` + `query` sends the page's element list and text to the TypeSafe API. Don't use them on pages that must not leave your organization (clear the key and nothing is sent).
+- Without a key, `find` returns an error and `read_page` ignores `query` and returns the full text.
+- `find` looks at up to 500 elements and `read_page` + `query` at the first 20,000 chars of text (to fit Jev's 32k-token input limit).
 
-## ローカル（LAN）で使う
+## Run locally (LAN)
 
 ```sh
 cd worker
 pnpm install
 cat > .dev.vars <<'EOF'
 ACCESS_TEAM_DOMAIN=
-LOCAL_ADMIN_TOKEN=管理画面用の長いランダム文字列
-LOCAL_AGENT_TOKENS=laptop=エージェント用の長いランダム文字列,server=別のトークン
+LOCAL_ADMIN_TOKEN=a-long-random-string-for-the-admin-ui
+LOCAL_AGENT_TOKENS=laptop=a-long-random-string-for-an-agent,server=another-token
 EOF
-pnpm dev               # 0.0.0.0:8787 で待ち受け
+pnpm dev               # listens on 0.0.0.0:8787
 ```
 
-`ACCESS_TEAM_DOMAIN` が空のときはローカルモードになり、Bearer トークンで認証します（`.dev.vars` で `wrangler.jsonc` の本番設定を上書きしている）。
+With `ACCESS_TEAM_DOMAIN` empty, tabgate runs in local mode and authenticates with bearer tokens (`.dev.vars` overrides the production settings in `wrangler.jsonc`).
 
-- `LOCAL_ADMIN_TOKEN`: 管理画面・管理 API 用。エージェントには渡さない
-- `LOCAL_AGENT_TOKENS`: エージェント用（`名前=トークン` のカンマ区切り）。エージェントは `local:<名前>` として識別され、許可されたブラウザだけが見える
+- `LOCAL_ADMIN_TOKEN`: for the admin UI and admin API. Never give it to agents.
+- `LOCAL_AGENT_TOKENS`: for agents, as comma-separated `name=token` pairs. Agents are identified as `local:<name>` and see only the browsers granted to them.
 
-1. `http://<IP>:8787/` を開き、LOCAL_ADMIN_TOKEN を入力してブラウザを登録 → トークンをコピー
-2. `chrome://extensions` →「パッケージ化されていない拡張機能を読み込む」で `extension/` を読み込む
-3. 拡張機能のポップアップにサーバー URL とトークンを入れ、「許可する」にチェックして保存
-4. エージェントに登録:
+1. Open `http://<IP>:8787/`, enter the LOCAL_ADMIN_TOKEN, register a browser, and copy its token
+2. On `chrome://extensions`, use "Load unpacked" to load `extension/`
+3. In the extension popup, enter the server URL and the token, tick "allow", and save
+4. Register the server with your agent:
 
 ```sh
-claude mcp add --transport http tabgate http://<IP>:8787/mcp --header "Authorization: Bearer <エージェント用トークン>"
+claude mcp add --transport http tabgate http://<IP>:8787/mcp --header "Authorization: Bearer <agent token>"
 ```
 
-5. 管理画面でエージェント `local:<名前>` にブラウザを許可
+5. In the admin UI, grant the browser to agent `local:<name>`
 
-## Cloudflare にデプロイしてリモートから使う
+## Deploy to Cloudflare for remote use
 
 ```sh
 cd worker
 pnpm run deploy
 ```
 
-カスタムドメイン（例: `tabgate.example.com`）を Worker に割り当てたうえで、Zero Trust ダッシュボードで以下を設定します。
+Assign a custom domain (e.g. `tabgate.example.com`) to the Worker, then configure the following in the Zero Trust dashboard.
 
-1. **Access アプリ（本体）**: self-hosted、ドメイン `tabgate.example.com`
-   - ポリシー: 使う人のメールアドレス / グループを Allow
-   - SSH 先などブラウザを開けない環境向けに、Service Token を作り **Service Auth** ポリシーも追加
-   - Advanced settings → **Managed OAuth** をオン（MCP クライアントが OAuth でログインできるようになる）
-   - 表示される **Application Audience (AUD) Tag** を控える
-2. **Access アプリ（拡張機能用）**: self-hosted、ドメイン `tabgate.example.com`、パス `/ext`、ポリシーは **Bypass**
-   （拡張機能は WebSocket の hello でブラウザトークンを送り、Worker が検証する）
-3. `wrangler.jsonc` の `vars` を設定して再デプロイ:
+1. **Access application (main)**: self-hosted, domain `tabgate.example.com`
+   - Policy: Allow the emails / groups of the people who will use it
+   - For environments without a browser (such as SSH hosts), create a service token and add a **Service Auth** policy
+   - Advanced settings → turn on **Managed OAuth** (lets MCP clients log in via OAuth)
+   - Note the **Application Audience (AUD) Tag**
+2. **Access application (extension)**: self-hosted, domain `tabgate.example.com`, path `/ext`, policy **Bypass**
+   (the extension sends its browser token in the WebSocket hello, and the Worker verifies it)
+3. Set `vars` in `wrangler.jsonc` and redeploy:
    - `ACCESS_TEAM_DOMAIN`: `https://<team>.cloudflareaccess.com`
-   - `ACCESS_AUD`: 1 で控えた AUD
-   - `ADMIN_EMAILS`: 管理画面を使える人のメール
+   - `ACCESS_AUD`: the AUD from step 1
+   - `ADMIN_EMAILS`: emails allowed to use the admin UI
 
-エージェントからの接続:
+Connecting from an agent:
 
 ```sh
-# ブラウザでログインできる環境（Managed OAuth）
+# Where you can log in with a browser (Managed OAuth)
 claude mcp add --transport http tabgate https://tabgate.example.com/mcp
 
-# SSH 先など（Service Token）
+# On SSH hosts etc. (service token)
 claude mcp add --transport http tabgate https://tabgate.example.com/mcp \
   --header "CF-Access-Client-Id: <id>" --header "CF-Access-Client-Secret: <secret>"
 ```
 
-最初の接続でエージェントが管理画面に現れるので、見せたいブラウザにチェックを入れます。
+The agent shows up in the admin UI after its first connection; tick the browsers it should see.
 
-## テスト
+## Tests
 
 ```sh
-cd worker && pnpm test  # wrangler dev を起動し、偽の拡張機能 + MCP クライアントで一通り確認
+cd worker && pnpm test  # starts wrangler dev and exercises everything with a fake extension + MCP client
 ```
 
-## 既知の制限
+## Known limitations
 
-- `screenshot` はバックグラウンドのタブだとタイムアウトすることがある
-- 操作中のタブには Chrome の「デバッグ中」バーが出る（`chrome.debugger` の仕様）
-- MCP は JSON 応答のみ（SSE ストリーミングやサーバー発の通知は未対応）
-- 中継は Durable Object 1 インスタンス。個人〜小規模チーム向け
+- `screenshot` may time out on background tabs
+- Tabs being driven show Chrome's "is debugging this browser" bar (a `chrome.debugger` requirement)
+- MCP responses are JSON only (no SSE streaming or server-initiated notifications)
+- The relay is a single Durable Object instance, aimed at individuals and small teams
+
+## License
+
+[MIT](LICENSE)
