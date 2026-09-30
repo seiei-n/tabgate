@@ -19,7 +19,8 @@ async function connect() {
     if (m.type === "welcome") return setStatus(`接続済み: ${m.name}`);
     if (!m.id) return;
     const p = m.params ?? {};
-    const run = () => handlers[m.method](p);
+    const run = () =>
+      withTimeout((async () => (p.tabId != null && (await wake(p.tabId)), handlers[m.method](p)))(), 45_000, `${m.method} が 45 秒以内に終わりませんでした`);
     try {
       const result = await (p.tabId != null ? serial(p.tabId, run) : run());
       s.send(JSON.stringify({ id: m.id, result }));
@@ -57,6 +58,12 @@ function serial(tabId, fn) {
   return p;
 }
 
+// 止まったコマンドで serial の待ち行列が詰まらないよう、必ず期限内に終わらせる（Worker 側の 60 秒より短く）
+function withTimeout(p, ms, msg) {
+  let t;
+  return Promise.race([p, new Promise((_, ng) => (t = setTimeout(() => ng(new Error(msg)), ms)))]).finally(() => clearTimeout(t));
+}
+
 const attached = new Set();
 chrome.debugger.onDetach.addListener((src) => attached.delete(src.tabId));
 
@@ -66,8 +73,21 @@ async function cdp(tabId, method, params = {}) {
       if (!/already attached/i.test(e.message)) throw e;
     });
     attached.add(tabId);
+    // 裏のウィンドウでもフォーカスがあるように振る舞わせる（focus / blur 依存の UI 対策）
+    await chrome.debugger.sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => {});
   }
   return chrome.debugger.sendCommand({ tabId }, method, params);
+}
+
+// 裏に置かれて眠ったタブを起こす。Memory Saver で破棄されていれば読み込み直し、凍結されていれば解除する
+async function wake(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.autoDiscardable) await chrome.tabs.update(tabId, { autoDiscardable: false });
+  if (tab.discarded) {
+    await chrome.tabs.reload(tabId);
+    await waitLoad(tabId);
+  }
+  await cdp(tabId, "Page.setWebLifecycleState", { state: "active" }).catch(() => {});
 }
 
 async function evaluate(tabId, expression) {
@@ -86,6 +106,24 @@ async function waitLoad(tabId) {
 }
 
 const q = (selector) => `document.querySelector(${JSON.stringify(selector)})`;
+
+// 仮想マウス: 操作する要素までカーソルを動かし、押したように縮ませる（人が見て追えるように）。
+// innerHTML は Trusted Types のサイトで弾かれるので、CSS だけで描く
+const moveCursor = `(async (e) => {
+  const r = e.getBoundingClientRect(), x = r.left + r.width / 2 + 'px', y = r.top + r.height / 2 + 'px';
+  let c = document.getElementById('__tg_cursor');
+  if (!c) {
+    c = document.createElement('div');
+    c.id = '__tg_cursor';
+    c.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:20px;height:20px;margin:-12px 0 0 -12px;border-radius:50%;'
+      + 'background:rgba(255,90,0,.55);border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.5);transition:left .35s ease,top .35s ease,transform .15s;left:' + x + ';top:' + y;
+    document.documentElement.appendChild(c);
+  }
+  c.style.left = x; c.style.top = y;
+  if (!document.hidden) await new Promise((ok) => setTimeout(ok, 400)); // 見えないときは待たない（背景タブのタイマーは間引かれる）
+  c.style.transform = 'scale(.6)';
+  setTimeout(() => (c.style.transform = ''), 150);
+})`;
 
 // 操作できる要素に data-tg=N を振り、本文（要素の位置に [N] を埋め込んだもの）と、find 用の要素一覧（index = N）を返す。
 // - 要素一覧: 同じ表記の要素が複数あれば（withContext 時のみ）、属する行・見出しのテキストを " @ ..." で添える
@@ -211,8 +249,18 @@ const handlers = {
     return tabInfo(await chrome.tabs.get(tabId));
   },
   close_tab: async ({ tabId }) => (await chrome.tabs.remove(tabId), "closed"),
-  // ponytail: 背景タブは描画されずタイムアウトすることがある。必要になったら一時的にアクティブ化する
-  screenshot: async ({ tabId }) => (await cdp(tabId, "Page.captureScreenshot", { format: "png" })).data,
+  // 背景タブは描画されず撮影が返ってこない。今の寸法で metrics を上書きすると描画される。
+  // それでも返らない（隠れたウィンドウ等）ときは長く待たずに理由を返す
+  screenshot: async ({ tabId }) => {
+    const [w, h, dpr] = await evaluate(tabId, "[innerWidth, innerHeight, devicePixelRatio]");
+    await cdp(tabId, "Emulation.setDeviceMetricsOverride", { width: w || 1280, height: h || 800, deviceScaleFactor: dpr || 1, mobile: false });
+    try {
+      return (await withTimeout(cdp(tabId, "Page.captureScreenshot", { format: "png" }), 10_000,
+        "描画されていないため撮影できません（隠れたウィンドウの可能性）。read_page を使うか、ウィンドウを表示してください")).data;
+    } finally {
+      await cdp(tabId, "Emulation.clearDeviceMetricsOverride").catch(() => {});
+    }
+  },
   read_page: async ({ tabId, query, top_k = 3 }) => {
     const page = await evaluate(tabId, readPage(300));
     const full = { url: page.url, title: page.title, text: page.text };
@@ -245,9 +293,9 @@ const handlers = {
   },
   evaluate: ({ tabId, expression }) => evaluate(tabId, expression),
   click: ({ tabId, selector }) =>
-    evaluate(tabId, `(() => { const e = ${q(selector)}; if (!e) throw new Error('not found'); e.scrollIntoView({ block: 'center' }); e.click(); return 'clicked'; })()`),
+    evaluate(tabId, `(async () => { const e = ${q(selector)}; if (!e) throw new Error('not found'); e.scrollIntoView({ block: 'center' }); await ${moveCursor}(e); e.click(); return 'clicked'; })()`),
   type: async ({ tabId, selector, text, submit }) => {
-    await evaluate(tabId, `(() => { const e = ${q(selector)}; if (!e) throw new Error('not found'); e.focus(); })()`);
+    await evaluate(tabId, `(async () => { const e = ${q(selector)}; if (!e) throw new Error('not found'); e.scrollIntoView({ block: 'center' }); await ${moveCursor}(e); e.focus(); })()`);
     await cdp(tabId, "Input.insertText", { text });
     if (submit) {
       const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 };
